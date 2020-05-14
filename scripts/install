@@ -51,6 +51,8 @@ openstreetmap_key=$YNH_APP_ARG_OPENSTREETMAP_KEY
 openstreetmap_secret=$YNH_APP_ARG_OPENSTREETMAP_SECRET
 
 app=$YNH_APP_INSTANCE_NAME
+db_name=$app
+
 
 
 #=================================================
@@ -110,6 +112,79 @@ ynh_script_progression --message="Configuring system user..." --time --weight=1
 ynh_system_user_create --username=$app
 
 #=================================================
+# Prepare Umap to be installed
+#=================================================
+
+ynh_script_progression --message="Preparing Umap to be installed..." --time --weight=1
+
+sudo mkdir -p "${final_path}/venv"
+sudo mkdir "${final_path}/static"
+sudo mkdir "${final_path}/data"
+
+sudo chown -R $app:$app $final_path
+
+#=================================================
+# Create role and database with a password
+#=================================================
+
+ynh_script_progression --message="Setting up databse for Umap..." --time --weight=1
+
+ynh_psql_setup_db $db_name $db_name
+
+# Activate PostGIS extension
+ynh_psql_create_extension $app postgis
+
+#=================================================
+# Installation de "umap"
+#=================================================
+
+ynh_script_progression --message="Installation of Umap..." --time --weight=1
+
+exec_as "$app" "virtualenv -p /usr/bin/python3 --distribute --no-site-packages ${final_path}/venv"
+exec_as "$app" "cd ${final_path} && source ${final_path}/venv/bin/activate && pip3 install umap-project && pip3 install uwsgi"
+
+localfile="${final_path}/venv/local.py"
+exec_as "$app" "cd ${final_path} && source ${final_path}/venv/bin/activate && wget https://raw.githubusercontent.com/umap-project/umap/master/umap/settings/local.py.sample -O ${localfile}"
+
+# Replace variables configuration 
+secret=$(ynh_string_random 24)
+language="$(echo $language | head -c 2)"
+ynh_replace_config_umap
+
+# Install umap
+exec_as "$app" "cd ${final_path} && source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap migrate && echo yes | umap collectstatic && umap storagei18n"
+# Create superuser
+exec_as "$app" "cd ${final_path} && source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap createsuperuser --username ${admin} --email ${admin}@${domain} --noinput"
+
+# Create datalayer directory
+sudo mkdir /opt/umap/data/datalayer
+sudo chown -R umap:users /opt/umap/data/datalayer
+
+#=================================================
+# Copy Files
+#=================================================
+
+ynh_script_progression --message="Copying files..." --time --weight=1
+
+sudo cp ../conf/uwsgi_params $final_path/uwsgi_params
+sudo cp ../conf/uwsgi.ini $final_path/uwsgi.ini
+sudo sed -i "s@__APP__@$app@g" $final_path/uwsgi.ini
+
+#=================================================
+# Add umap.uwsgi as a service
+#=================================================
+
+ynh_script_progression --message="Configuring Umap service..." --time --weight=1
+
+# Config service
+sudo mkdir -p /etc/uwsgi/apps-enabled/
+sudo ln -s $final_path/uwsgi.ini /etc/uwsgi/apps-enabled/umap.uwsgi.ini
+
+sudo systemctl enable uwsgi
+sudo systemctl restart uwsgi
+sudo yunohost service add umap.uwsgi
+
+#=================================================
 # NGINX CONFIGURATION
 #=================================================
 
@@ -118,77 +193,57 @@ ynh_script_progression --message="Configuring nginx web server..." --time --weig
 # Create a dedicated nginx config
 ynh_add_nginx_config
 
+#=================================================
+# SETUP LOGROTATE
+#=================================================
+ynh_script_progression --message="Configuring log rotation..." --time --weight=1
 
-# Prepare Umap to be installed
-sudo mkdir -p /opt/$app
-sudo useradd -N $app -d /opt/$app/
+# Use logrotate to manage application logfile(s)
+ynh_use_logrotate
 
-# Create role and database with a password
-ynh_psql_setup_db $app $app
+#=================================================
+# INTEGRATE SERVICE IN YUNOHOST
+#=================================================
 
-# Activate PostGIS extension
-ynh_psql_create_extension $app postgis
+yunohost service add $app --description "A short description of the app" --log "/var/log/$app/$app.log"
 
-sudo mkdir -p $final_path/venv
-sudo chown -R umap: $final_path
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
 
-# Installation de "umap"
-sudo su $app -c "virtualenv -p /usr/bin/python3 --distribute --no-site-packages ${final_path}/venv"
-sudo bash -c "source ${final_path}/venv/bin/activate && pip3 install umap-project && pip3 install uwsgi"
+ynh_script_progression --message="Starting a systemd service..." --time --weight=1
 
-localfile="${final_path}/venv/local.py"
-sudo bash -c "source ${final_path}/venv/bin/activate && wget https://raw.githubusercontent.com/umap-project/umap/master/umap/settings/local.py.sample -O ${localfile}"
+ynh_systemd_action --service_name=$app --action="start" --log_path="/var/log/$app/$app.log"
 
-# Replace variables configuration 
-secret=$(ynh_string_random 24)
-language="$(echo $language | head -c 2)"
-ynh_replace_config_umap
+#=================================================
+# SETUP FAIL2BAN
+#=================================================
+ynh_script_progression --message="Configuring fail2ban..." --time --weight=1
 
-# Create STATIC & MEDIA dir
-sudo mkdir "${final_path}/static"
-sudo mkdir "${final_path}/data"
+# Create a dedicated fail2ban config
+ynh_add_fail2ban_config --logpath="/var/log/nginx/${domain}-error.log" --failregex="Regex to match into the log for a failed login"
 
-# export env
-# sudo bash -c "source ${final_path}/venv/bin/activate && env = UMAP_SETTINGS=${final_path}/venv/local.py"
+#=================================================
+# SETUP SSOWAT
+#=================================================
+ynh_script_progression --message="Configuring SSOwat..." --time --weight=1
 
-# Install umap
-sudo bash -c "source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap migrate && echo yes | umap collectstatic && umap storagei18n"
-# Create superuser
-sudo bash -c "source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap createsuperuser --username ${admin} --email ${admin}@${domain} --noinput"
-
-# Create datalayer directory
-sudo mkdir /opt/umap/data/datalayer
-sudo chown -R umap:users /opt/umap/data/datalayer
-
-# Copy Files
-sudo cp ../conf/uwsgi_params $final_path/uwsgi_params
-sudo cp ../conf/uwsgi.ini $final_path/uwsgi.ini
-sudo sed -i "s@__APP__@$app@g" $final_path/uwsgi.ini
-
-# Config service
-sudo mkdir -p /etc/uwsgi/apps-enabled/
-sudo ln -s $final_path/uwsgi.ini /etc/uwsgi/apps-enabled/umap.uwsgi.ini
-
-# Start service
-sudo systemctl enable uwsgi
-sudo systemctl restart uwsgi
-
-# Add umap.uwsgi as a service
-sudo yunohost service add umap.uwsgi
-
-# Modify Nginx configuration file and copy it to Nginx conf directory
-ynh_nginx_config
-
-# Set ssowat config
-if [ $is_public -eq 0 ]
-then
-	ynh_app_setting_delete $app skipped_uris # Delete public access
-fi
-
+# Make app public if necessary
 if [ $is_public -eq 1 ]
 then
-	ynh_app_setting_set $app skipped_uris "/" # Make app public if necessary
+	# unprotected_uris allows SSO credentials to be passed anyway.
+	ynh_app_setting_set --app=$app --key=unprotected_uris --value="/"
 fi
 
-# Reload nginx
-sudo systemctl reload nginx
+#=================================================
+# RELOAD NGINX
+#=================================================
+ynh_script_progression --message="Reloading nginx web server..." --time --weight=1
+
+ynh_systemd_action --service_name=nginx --action=reload
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression --message="Installation of $app completed" --time --last

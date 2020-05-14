@@ -1,42 +1,124 @@
 #!/bin/bash
 
-# Exit on command errors and treat unset variables as an error
-set -u
+#=================================================
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
 
-source _common.sh	# Loads the generic functions usually used in the script
-source /usr/share/yunohost/helpers # Source app helpers
+source _common.sh
+source /usr/share/yunohost/helpers
 
-# Get multi-instances specific variables
+#=================================================
+# LOAD SETTINGS
+#=================================================
+
+ynh_script_progression --message="Loading installation settings..." --time --weight=1
 app=$YNH_APP_INSTANCE_NAME
 
-domain=$(ynh_app_setting_get $app domain)
+domain=$(ynh_app_setting_get --app=$app --key=domain)
+port=$(ynh_app_setting_get --app=$app --key=port)
+final_path=$(ynh_app_setting_get --app=$app --key=final_path)
+db_name=$(ynh_app_setting_get --app=$app --key=db_name)
+db_user=$db_name
 
-# TODO: Forbidden: delete yunohost moulinette, bad idea
-# sudo apt-get --purge remove -y python3.4 python3.4-dev python3-pip python3-virtualenv uwsgi uwsgi-plugin-python3 postgresql-9.4 postgresql-9.4-postgis-2.1 postgresql-server-dev-9.4 libpq-dev
+#=================================================
+# STANDARD REMOVE
+#=================================================
+# REMOVE SERVICE INTEGRATION IN YUNOHOST
+#=================================================
 
-ynh_psql_remove_db $app $app
+# Remove the service from the list of services known by Yunohost (added from `yunohost service add`)
+if ynh_exec_warn_less yunohost service status $app >/dev/null
+then
+	ynh_script_progression --message="Removing $app service..." --time --weight=1
+	yunohost service remove $app
+fi
 
-sudo systemctl disable uwsgi
+#=================================================
+# STOP AND REMOVE SERVICE
+#=================================================
+ynh_script_progression --message="Stopping and removing the systemd service..." --time --weight=1
 
-# Delete service on Yunohost monitoring
+# Remove the dedicated systemd config
+ynh_remove_systemd_config
+
+#=================================================
+# REMOVE THE MYSQL DATABASE
+#=================================================
+ynh_script_progression --message="Removing the MySQL database..." --time --weight=1
+
+# Remove a database if it exists, along with the associated user
+ynh_psql_remove_db --db_user=$db_user --db_name=$db_name
+
+#=================================================
+# REMOVE DEPENDENCIES
+#=================================================
+ynh_script_progression --message="Removing dependencies..." --time --weight=1
+
+# Remove metapackage and its dependencies
+ynh_remove_app_dependencies
+
+#=================================================
+# REMOVE APP MAIN DIR
+#=================================================
+ynh_script_progression --message="Removing app main directory..." --time --weight=1
+
+# Remove the app directory securely
+ynh_secure_remove --file="$final_path"
+
 if sudo yunohost service status | grep -q umap.uwsgi
 then
-	echo "Remove mediadrop service"
+	echo "Remove UMAP service"
 	sudo yunohost service remove umap.uwsgi
 fi
 
-ynh_secure_remove "/etc/uwsgi/apps-enabled"
+#=================================================
+# REMOVE NGINX CONFIGURATION
+#=================================================
+ynh_script_progression --message="Removing nginx web server configuration..." --time --weight=1
 
-# Delete directory application
-ynh_secure_remove "/opt/${app}"
-
-# remove nginx conf
+# Remove the dedicated nginx config
 ynh_remove_nginx_config
 
-# Remove user
-sudo userdel -f $app
+#=================================================
+# REMOVE LOGROTATE CONFIGURATION
+#=================================================
+ynh_script_progression --message="Removing logrotate configuration..." --time --weight=1
 
-sudo systemctl restart postgresql
-sudo systemctl reload nginx
+# Remove the app-specific logrotate config
+ynh_remove_logrotate
 
-echo -e "\e[0m"	# Restore normal color
+#=================================================
+# CLOSE A PORT
+#=================================================
+
+if yunohost firewall list | grep -q "\- $port$"
+then
+	ynh_script_progression --message="Closing port $port..."
+	ynh_exec_warn_less yunohost firewall disallow TCP $port
+fi
+
+#=================================================
+# REMOVE FAIL2BAN CONFIGURATION
+#=================================================
+ynh_script_progression --message="Removing fail2ban configuration..." --time --weight=1
+
+# Remove the dedicated fail2ban config
+ynh_remove_fail2ban_config
+
+#=================================================
+# GENERIC FINALIZATION
+#=================================================
+# REMOVE DEDICATED USER
+#=================================================
+ynh_script_progression --message="Removing the dedicated system user..." --time --weight=1
+
+# Delete a system user
+ynh_system_user_delete --username=$app
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression --message="Removal of $app completed" --time --last
