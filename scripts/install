@@ -1,15 +1,22 @@
 #!/bin/bash
 
-# Exit on command errors and treat unset variables as an error
-set -eu
-
-source _common.sh	# Loads the generic functions usually used in the script
-source /usr/share/yunohost/helpers # Source app helpers
-
 #=================================================
-# MANAGE FAILURE OF THE SCRIPT
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
 #=================================================
 
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# MANAGE SCRIPT FAILURE
+#=================================================
+
+ynh_clean_setup () {
+	### Remove this function if there's nothing to clean before calling the remove script.
+	true
+}
 # Exit if an error occurs during the execution of the script
 ynh_abort_if_errors
 
@@ -17,40 +24,47 @@ ynh_abort_if_errors
 # RETRIEVE ARGUMENTS FROM THE MANIFEST
 #=================================================
 
+ynh_script_progression --message="Storing installation settings..." --time --weight=1
+
 # Retrieve arguments
 domain=$YNH_APP_ARG_DOMAIN
 path_url=$YNH_APP_ARG_PATH_URL
 admin=$YNH_APP_ARG_ADMIN
 language=$YNH_APP_ARG_LANGUAGE
 is_public=$YNH_APP_ARG_IS_PUBLIC
+
+# Github Social Integration
 github_key=$YNH_APP_ARG_GITHUB_KEY
 github_secret=$YNH_APP_ARG_GITHUB_SECRET
 github_scope=$YNH_APP_ARG_GITHUB_SCOPE
+
+# BitBucket Social Integration
 bitbucket_key=$YNH_APP_ARG_BITBUCKET_KEY
 bitbucket_secret=$YNH_APP_ARG_BITBUCKET_SECRET
+
+# Twitter Social Integration
 twitter_key=$YNH_APP_ARG_TWITTER_KEY
 twitter_secret=$YNH_APP_ARG_TWITTER_SECRET
+
+# Openstreetmap Social Integration
 openstreetmap_key=$YNH_APP_ARG_OPENSTREETMAP_KEY
 openstreetmap_secret=$YNH_APP_ARG_OPENSTREETMAP_SECRET
 
 app=$YNH_APP_INSTANCE_NAME
 
+
 #=================================================
-# CHECK IF THE APP CAN BE INSTALLED WITH THIS ARGS
+# CHECK IF THE APP CAN BE INSTALLED WITH THESE ARGS
 #=================================================
 
-ynh_user_exists "$admin" || ynh_die "user $admin does not exist"
+ynh_script_progression --message="Validating installation parameters..." --time --weight=1
 
 final_path=/var/www/$app
-test ! -e "$final_path" || ynh_die "This path already contains a folder"
+test ! -e "$final_path" || ynh_die --message="This path already contains a folder"
+ynh_user_exists "$admin" || ynh_die "user $admin does not exist"
 
-# Normalize the url path syntax
-path_url=$(ynh_normalize_url_path $path_url)
-
-# Check web path availability
-ynh_webpath_available $domain $path_url
 # Register (book) web path
-ynh_webpath_register $app $domain $path_url
+ynh_webpath_register --app=$app --domain=$domain --path_url=$path_url
 
 #=================================================
 # STORE SETTINGS FROM MANIFEST
@@ -65,10 +79,45 @@ ynh_app_setting_set $app is_public $is_public
 #=================================================
 # STANDARD MODIFICATIONS
 #=================================================
+# FIND AND OPEN A PORT
+#=================================================
+ynh_script_progression --message="Configuring firewall..." --time --weight=1
 
-# Install dependency to convert tracks to a readable format for the browser
-ynh_package_update
-ynh_package_install postgresql postgresql-server-dev-9.6 postgis postgresql-9.6-postgis-2.3 python-pip git python-virtualenv virtualenvwrapper python3-dev python3-setuptools libtiff5-dev libjpeg62-turbo-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev tcl8.6-dev tk8.6-dev python-tk python3.5-dev python-dev python-imaging postgresql-9.6-postgis-scripts
+### Use these lines if you have to open a port for the application
+### `ynh_find_port` will find the first available port starting from the given port.
+### If you're not using these lines:
+###		- Remove the section "CLOSE A PORT" in the remove script
+
+# Find an available port
+port=$(ynh_find_port --port=8095)
+ynh_app_setting_set --app=$app --key=port --value=$port
+
+#=================================================
+# INSTALL DEPENDENCIES
+#=================================================
+
+ynh_script_progression --message="Installing dependencies..." --time --weight=1
+
+ynh_install_app_dependencies postgresql postgresql-server-dev-9.6 postgis postgresql-9.6-postgis-2.3 python-pip git python-virtualenv virtualenvwrapper python3-dev python3-setuptools libtiff5-dev libjpeg62-turbo-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev tcl8.6-dev tk8.6-dev python-tk python3.5-dev python-dev python-imaging postgresql-9.6-postgis-scripts
+
+#=================================================
+# CREATE DEDICATED USER
+#=================================================
+
+ynh_script_progression --message="Configuring system user..." --time --weight=1
+
+# Create a system user
+ynh_system_user_create --username=$app
+
+#=================================================
+# NGINX CONFIGURATION
+#=================================================
+
+ynh_script_progression --message="Configuring nginx web server..." --time --weight=1
+
+# Create a dedicated nginx config
+ynh_add_nginx_config
+
 
 # Prepare Umap to be installed
 sudo mkdir -p /opt/$app
