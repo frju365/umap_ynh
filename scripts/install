@@ -144,7 +144,7 @@ ynh_psql_create_extension $app postgis
 
 ynh_script_progression --message="Installation of Umap..." --time --weight=1
 
-exec_as "$app" "virtualenv -p /usr/bin/python3 --distribute --no-site-packages ${final_path}/venv"
+exec_as "$app" "/usr/bin/virtualenv -p /usr/bin/python3 --distribute --no-site-packages ${final_path}/venv"
 exec_as "$app" "cd ${final_path} && source ${final_path}/venv/bin/activate && pip3 install umap-project && pip3 install uwsgi"
 
 localfile="${final_path}/venv/local.py"
