@@ -77,6 +77,7 @@ ynh_app_setting_set $app path $path_url
 ynh_app_setting_set $app admin $admin
 ynh_app_setting_set $app language $language
 ynh_app_setting_set $app is_public $is_public
+ynh_app_setting_set $app db_name $db_name
 
 #=================================================
 # STANDARD MODIFICATIONS
