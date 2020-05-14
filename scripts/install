@@ -147,10 +147,10 @@ ynh_script_progression --message="Installation of Umap..." --time --weight=1
 cd ${final_path}
 
 exec_as "$app" /usr/bin/virtualenv -p /usr/bin/python3 --distribute --no-site-packages ${final_path}/venv
-exec_as "$app" source ${final_path}/venv/bin/activate && pip3 install umap-project && pip3 install uwsgi
+exec_as "$app" /bin/bash -c source ${final_path}/venv/bin/activate && pip3 install umap-project && pip3 install uwsgi
 
 localfile="${final_path}/venv/local.py"
-exec_as "$app" source ${final_path}/venv/bin/activate && wget https://raw.githubusercontent.com/umap-project/umap/master/umap/settings/local.py.sample -O ${localfile}
+exec_as "$app" /bin/bash -c source ${final_path}/venv/bin/activate && wget https://raw.githubusercontent.com/umap-project/umap/master/umap/settings/local.py.sample -O ${localfile}
 
 # Replace variables configuration 
 secret=$(ynh_string_random 24)
@@ -158,9 +158,9 @@ language="$(echo $language | head -c 2)"
 ynh_replace_config_umap
 
 # Install umap
-exec_as "$app" source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap migrate && echo yes | umap collectstatic && umap storagei18n
+exec_as "$app" /bin/bash -c source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap migrate && echo yes | umap collectstatic && umap storagei18n
 # Create superuser
-exec_as "$app" source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap createsuperuser --username ${admin} --email ${admin}@${domain} --noinput
+exec_as "$app" /bin/bash -c source ${final_path}/venv/bin/activate && export UMAP_SETTINGS=${localfile} && umap createsuperuser --username ${admin} --email ${admin}@${domain} --noinput
 
 # Create datalayer directory
 sudo mkdir /opt/umap/data/datalayer
